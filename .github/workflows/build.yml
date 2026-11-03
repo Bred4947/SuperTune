@@ -1,0 +1,71 @@
+name: Build SuperTune
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Package for Mac
+        if: runner.os == 'macOS'
+        run: |
+          OUT="dist/SuperTune (Mac)"
+          mkdir -p "$OUT"
+          cp -R "build/SuperTune_artefacts/Release/VST3/SuperTune.vst3" "$OUT/"
+          cp -R "build/SuperTune_artefacts/Release/AU/SuperTune.component" "$OUT/"
+          # Ad-hoc sign so Apple Silicon Macs will load it
+          codesign --force --deep -s - "$OUT/SuperTune.vst3"
+          codesign --force --deep -s - "$OUT/SuperTune.component"
+          cp "installer/Install SuperTune.command" installer/READ_ME_FIRST.txt "$OUT/"
+          chmod +x "$OUT/Install SuperTune.command"
+          cd dist && ditto -c -k --keepParent "SuperTune (Mac)" SuperTune-Mac.zip
+
+      - name: Package for Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = "dist/SuperTune (Windows)"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Recurse "build/SuperTune_artefacts/Release/VST3/SuperTune.vst3" $out
+          Copy-Item "installer/Install SuperTune.bat","installer/READ_ME_FIRST.txt" $out
+          Compress-Archive -Path $out -DestinationPath dist/SuperTune-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperTune-${{ runner.os }}
+          path: dist/*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish shareable download page
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: SuperTune
+          body: |
+            Pitch correction, underground edition (VST3/AU). Download the zip for your computer, unzip, and run the installer inside.
+          files: dist/*.zip
+          make_latest: true
